@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>下场单智能生成系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .table-cell { border: 1px solid #333; padding: 6px 10px; }
+        .input-plain { border: none; outline: none; background: transparent; width: 100%; }
+        .input-plain:focus { background: #f0f9ff; }
+        .gray-header { background: #d9d9d9; font-weight: 600; text-align: center; }
+        .no-bg-cell { background: transparent !important; }
+        .ocr-card { background: #fff; border: 1px solid #eee; border-radius: 4px; padding: 12px; margin-bottom: 8px; }
+        .ocr-card-header { font-weight: 600; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid #eee; }
+        .ocr-card-content { font-family: monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
+        .drag-over { border-color: #3b82f6 !important; background-color: #eff6ff !important; }
+        .upload-zone { transition: all 0.2s ease; cursor: pointer; }
+        .upload-zone:hover { transform: translateY(-1px); }
+        .progress-bar { height: 4px; background: #e5e7eb; border-radius: 2px; overflow: hidden; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #10b981, #3b82f6); transition: width 0.3s ease; }
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #e5e7eb;
+            border-top-color: #10b981;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            z-index: 9999;
+            animation: slideIn 0.3s ease, fadeOut 0.3s ease 2.7s;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .toast-success { background: #10b981; }
+        .toast-error { background: #ef4444; }
+        .toast-warning { background: #f59e0b; }
+        .toast-info { background: #3b82f6; }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-6">
+    <div class="max-w-7xl mx-auto">
+        <div class="text-center mb-6">
+            <h1 class="text-2xl font-bold text-gray-800">下场单智能生成系统</h1>
+            <p class="text-gray-500 text-sm mt-1">上传设备图片自动识别 · 一键导出规范Excel</p>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="mb-6">
+                <table class="w-full border-collapse border border-gray-400">
+                    <tr>
+                        <td colspan="6" class="table-cell text-center text-lg font-medium">公司-下场单</td>
+                        <td class="table-cell w-32">业&nbsp;&nbsp;务&nbsp;&nbsp;员：<input type="text" class="input-plain text-red-600 font-medium" id="salesman" placeholder="业务负责人"></td>
+                        <td class="table-cell w-48">下场负责人：<input type="text" class="input-plain text-red-600 font-medium" id="siteLeader" placeholder="下场工作负责人"></td>
+                        <td class="table-cell w-20 text-center bg-gray-100">颜色示例</td>
+                    </tr>
+                    <tr>
+                        <td colspan="6" class="table-cell">单位名称：<input type="text" class="input-plain text-red-600 font-medium" id="companyName" placeholder="填写全称"></td>
+                        <td class="table-cell">联&nbsp;&nbsp;系&nbsp;&nbsp;人：<input type="text" class="input-plain text-red-600 font-medium" id="contact" placeholder="客户姓名"></td>
+                        <td class="table-cell">联系方式：<input type="text" class="input-plain text-red-600 font-medium" id="phone" placeholder="客户电话"></td>
+                        <td class="table-cell bg-blue-500 text-white text-center">带回</td>
+                    </tr>
+                    <tr>
+                        <td colspan="6" class="table-cell">单位地址：<input type="text" class="input-plain text-red-600 font-medium" id="address" placeholder="填写全称"></td>
+                        <td class="table-cell">下场日期：<input type="date" class="input-plain text-red-600 font-medium" id="siteDate"></td>
+                        <td class="table-cell">下场人员：<input type="text" class="input-plain text-red-600 font-medium" id="staff" placeholder="所有参加下场人员"></td>
+                        <td class="table-cell bg-red-500 text-white text-center">退检</td>
+                    </tr>
+                    <tr>
+                        <td colspan="6" class="table-cell">委托单备注：<input type="text" class="input-plain text-red-600 font-medium" id="remark" placeholder="填写要求完成时间等信息"></td>
+                        <td class="table-cell">设备总数：<input type="number" class="input-plain text-red-600 font-medium" id="totalCount" placeholder="整单设备数量"></td>
+                        <td class="table-cell">带回数量：<input type="number" class="input-plain text-red-600 font-medium" id="bringBackCount" placeholder="带回设备数量"></td>
+                        <td class="table-cell bg-green-500 text-white text-center">外检</td>
+                    </tr>
+                </table>
+            </div>
+
+            <div class="mb-6">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-semibold text-gray-700">设备图片识别（上传即自动识别）</h3>
+                    <div class="flex items-center gap-2">
+                        <span id="recognitionStats" class="text-xs text-gray-500">已识别 0 张</span>
+                        <button onclick="retryFailed()" id="retryBtn" class="px-3 py-1 bg-orange-500 text-white rounded text-sm hover:bg-orange-600 hidden">
+                            重试失败
+                        </button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-3 gap-4">
+                    <div class="p-4 border-2 border-dashed border-green-300 rounded-lg bg-green-50 upload-zone" id="dropExternal"
+                         onclick="document.getElementById('uploadExternal').click()"
+                         ondragover="handleDragOver(event, 'external')"
+                         ondragleave="handleDragLeave(event, 'external')"
+                         ondrop="handleDrop(event, 'external')">
+                        <div class="flex items-center justify-between mb-2">
+                            <h4 class="font-medium text-green-700">外检设备</h4>
+                            <input type="file" id="uploadExternal" accept="image/*" multiple class="hidden" onchange="handleImageUpload('external', event)">
+                            <label for="uploadExternal" class="px-3 py-1 bg-green-600 text-white rounded cursor-pointer hover:bg-green-700 text-xs">
+                                上传图片
+                            </label>
+                        </div>
+                        <div id="previewExternal" class="flex flex-wrap gap-1 min-h-[5rem] mb-2"></div>
+                        <div class="flex items-center justify-between">
+                            <div id="statusExternal" class="text-xs text-green-600">0 张 / 已识别 0 张</div>
+                            <div id="progressExternal" class="progress-bar w-20 hidden">
+                                <div class="progress-fill" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="text-xs text-gray-400 mt-2 text-center">点击或拖拽图片到此处</div>
+                    </div>
+
+                    <div class="p-4 border-2 border-dashed border-blue-300 rounded-lg bg-blue-50 upload-zone" id="dropBringBack"
+                         onclick="document.getElementById('uploadBringBack').click()"
+                         ondragover="handleDragOver(event, 'bringBack')"
+                         ondragleave="handleDragLeave(event, 'bringBack')"
+                         ondrop="handleDrop(event, 'bringBack')">
+                        <div class="flex items-center justify-between mb-2">
+                            <h4 class="font-medium text-blue-700">带回设备</h4>
+                            <input type="file" id="uploadBringBack" accept="image/*" multiple class="hidden" onchange="handleImageUpload('bringBack', event)">
+                            <label for="uploadBringBack" class="px-3 py-1 bg-blue-600 text-white rounded cursor-pointer hover:bg-blue-700 text-xs">
+                                上传图片
+                            </label>
+                        </div>
+                        <div id="previewBringBack" class="flex flex-wrap gap-1 min-h-[5rem] mb-2"></div>
+                        <div class="flex items-center justify-between">
+                            <div id="statusBringBack" class="text-xs text-blue-600">0 张 / 已识别 0 张</div>
+                            <div id="progressBringBack" class="progress-bar w-20 hidden">
+                                <div class="progress-fill" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="text-xs text-gray-400 mt-2 text-center">点击或拖拽图片到此处</div>
+                    </div>
+
+                    <div class="p-4 border-2 border-dashed border-red-300 rounded-lg bg-red-50 upload-zone" id="dropReturn"
+                         onclick="document.getElementById('uploadReturn').click()"
+                         ondragover="handleDragOver(event, 'return')"
+                         ondragleave="handleDragLeave(event, 'return')"
+                         ondrop="handleDrop(event, 'return')">
+                        <div class="flex items-center justify-between mb-2">
+                            <h4 class="font-medium text-red-700">退检设备</h4>
+                            <input type="file" id="uploadReturn" accept="image/*" multiple class="hidden" onchange="handleImageUpload('return', event)">
+                            <label for="uploadReturn" class="px-3 py-1 bg-red-600 text-white rounded cursor-pointer hover:bg-red-700 text-xs">
+                                上传图片
+                            </label>
+                        </div>
+                        <div id="previewReturn" class="flex flex-wrap gap-1 min-h-[5rem] mb-2"></div>
+                        <div class="flex items-center justify-between">
+                            <div id="statusReturn" class="text-xs text-red-600">0 张 / 已识别 0 张</div>
+                            <div id="progressReturn" class="progress-bar w-20 hidden">
+                                <div class="progress-fill" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="text-xs text-gray-400 mt-2 text-center">点击或拖拽图片到此处</div>
+                    </div>
+                </div>
+                <div id="ocrStatus" class="text-sm text-gray-500 mt-3 text-center">
+                    <span class="inline-block align-middle">上传图片后将自动开始识别</span>
+                </div>
+            </div>
+
+            <div class="mb-4">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="font-semibold text-gray-700">设备明细</h3>
+                    <button onclick="addRow()" class="px-3 py-1 bg-gray-600 text-white rounded text-sm hover:bg-gray-700">+ 添加行</button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full border-collapse border border-gray-400" id="deviceTable">
+                        <thead>
+                            <tr class="gray-header">
+                                <th class="table-cell w-12">序号</th>
+                                <th class="table-cell w-24">证书日期</th>
+                                <th class="table-cell w-40">设备名称</th>
+                                <th class="table-cell w-36">规格型号</th>
+                                <th class="table-cell w-36">出厂编号</th>
+                                <th class="table-cell w-32">设备编号</th>
+                                <th class="table-cell w-40">生产厂家</th>
+                                <th class="table-cell">设备备注</th>
+                                <th class="table-cell w-28">负责人</th>
+                                <th class="table-cell w-16">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="flex justify-center gap-4 mt-6">
+                <button onclick="exportExcel()" class="px-8 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 shadow">
+                    导出 Excel 表格
+                </button>
+                <button onclick="clearForm()" class="px-8 py-3 bg-gray-500 text-white rounded-lg font-medium hover:bg-gray-600">
+                    清空重置
+                </button>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="font-semibold text-gray-700">OCR识别原始内容</h3>
+                <button onclick="clearOCRResults()" class="px-3 py-1 bg-gray-500 text-white rounded text-sm hover:bg-gray-600">
+                    清空识别记录
+                </button>
+            </div>
+            <div id="ocrResultsPanel" class="max-h-80 overflow-y-auto">
+                <div class="text-center text-gray-400 py-8">暂无识别记录，上传图片后将自动识别并在此显示</div>
+            </div>
+        </div>
+
+        <div class="text-center text-xs text-gray-400">
+            <p>提示：OCR识别为后端自动识别，识别结果请人工核对后再导出</p>
+        </div>
+    </div>
+
+    <div id="toastContainer"></div>
+
+    <script>
+        const imageCategories = {
+            external: { name: '外检', bgClass: 'bg-green-100', images: [], category: 'inspected', recognized: 0, failed: 0 },
+            bringBack: { name: '带回', bgClass: 'bg-blue-100', images: [], category: 'brought_back', recognized: 0, failed: 0 },
+            return: { name: '退检', bgClass: 'bg-red-100', images: [], category: 'returned', recognized: 0, failed: 0 }
+        };
+
+        let isProcessing = false;
+        let pendingFiles = [];
+        let ocrResultCount = 0;
+        let totalRecognized = 0;
+        let failedImages = [];
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        function initTable() {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+        }
+
+        function addRow(num, bgClass = '') {
+            const tbody = document.getElementById('tableBody');
+            const rowNum = num || tbody.children.length + 1;
+            const tr = document.createElement('tr');
+            if (bgClass) tr.className = bgClass;
+            tr.innerHTML = `
+                <td class="table-cell text-center">${rowNum}</td>
+                <td class="table-cell"><input type="text" class="input-plain" data-field="certDate"></td>
+                <td class="table-cell"><input type="text" class="input-plain" data-field="name"></td>
+                <td class="table-cell"><input type="text" class="input-plain" data-field="model"></td>
+                <td class="table-cell"><input type="text" class="input-plain" data-field="factoryNo"></td>
+                <td class="table-cell"><input type="text" class="input-plain" data-field="deviceNo"></td>
+                <td class="table-cell"><input type="text" class="input-plain" data-field="manufacturer"></td>
+                <td class="table-cell"><input type="text" class="input-plain" data-field="remark"></td>
+                <td class="table-cell no-bg-cell"><input type="text" class="input-plain" data-field="owner"></td>
+                <td class="table-cell text-center no-bg-cell">
+                    <button onclick="deleteRow(this)" class="text-red-500 text-sm">删除</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        }
+
+        function deleteRow(btn) {
+            const tr = btn.parentElement.parentElement;
+            tr.remove();
+            reindexRows();
+        }
+
+        function reindexRows() {
+            const rows = document.querySelectorAll('#tableBody tr');
+            rows.forEach((row, index) => {
+                row.children[0].textContent = index + 1;
+            });
+        }
+
+        function handleDragOver(event, category) {
+            event.preventDefault();
+            event.stopPropagation();
+            const dropZone = document.getElementById('drop' + category.charAt(0).toUpperCase() + category.slice(1));
+            dropZone.classList.add('drag-over');
+        }
+
+        function handleDragLeave(event, category) {
+            event.preventDefault();
+            event.stopPropagation();
+            const dropZone = document.getElementById('drop' + category.charAt(0).toUpperCase() + category.slice(1));
+            dropZone.classList.remove('drag-over');
+        }
+
+        function handleDrop(event, category) {
+            event.preventDefault();
+            event.stopPropagation();
+            const dropZone = document.getElementById('drop' + category.charAt(0).toUpperCase() + category.slice(1));
+            dropZone.classList.remove('drag-over');
+            
+            const files = event.dataTransfer.files;
+            processFiles(category, files);
+        }
+
+        function handleImageUpload(category, event) {
+            const files = event.target.files;
+            processFiles(category, files);
+            event.target.value = '';
+        }
+
+        function processFiles(category, files) {
+            const cat = imageCategories[category];
+            const previewId = 'preview' + category.charAt(0).toUpperCase() + category.slice(1);
+            const previewEl = document.getElementById(previewId);
+            
+            let validCount = 0;
+            let invalidCount = 0;
+            
+            for (let file of files) {
+                if (!file.type.startsWith('image/')) {
+                    invalidCount++;
+                    continue;
+                }
+                if (file.size > 10 * 1024 * 1024) {
+                    invalidCount++;
+                    showToast(`文件 ${file.name} 超过10MB限制`, 'warning');
+                    continue;
+                }
+                
+                validCount++;
+                const imageId = Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    cat.images.push({ id: imageId, url: e.target.result, file: file, status: 'pending' });
+                    
+                    const imgContainer = document.createElement('div');
+                    imgContainer.className = 'relative inline-block';
+                    imgContainer.id = 'img_' + imageId;
+                    
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    img.className = 'h-16 border rounded';
+                    
+                    const overlay = document.createElement('div');
+                    overlay.className = 'absolute inset-0 bg-black bg-opacity-40 flex items-center justify-center rounded';
+                    overlay.id = 'overlay_' + imageId;
+                    overlay.innerHTML = '<div class="spinner"></div>';
+                    
+                    imgContainer.appendChild(img);
+                    imgContainer.appendChild(overlay);
+                    previewEl.appendChild(imgContainer);
+                    
+                    updateStatus(category);
+                    queueRecognition(category, imageId);
+                };
+                reader.readAsDataURL(file);
+            }
+            
+            if (validCount > 0) {
+                showToast(`已添加 ${validCount} 张图片，开始自动识别`, 'success');
+            }
+            if (invalidCount > 0) {
+                showToast(`${invalidCount} 个文件不符合要求`, 'warning');
+            }
+        }
+
+        function updateStatus(category) {
+            const cat = imageCategories[category];
+            const statusId = 'status' + category.charAt(0).toUpperCase() + category.slice(1);
+            const statusEl = document.getElementById(statusId);
+            
+            const total = cat.images.length;
+            const pending = cat.images.filter(i => i.status === 'pending' || i.status === 'processing').length;
+            const done = cat.images.filter(i => i.status === 'done' || i.status === 'failed').length;
+            
+            let statusText = `${total} 张 / 已识别 ${cat.recognized} 张`;
+            if (cat.failed > 0) statusText += `，失败 ${cat.failed} 张`;
+            if (pending > 0) statusText += `（等待 ${pending}）`;
+            
+            statusEl.textContent = statusText;
+            
+            updateOverallStats();
+        }
+
+        function updateOverallStats() {
+            let total = 0;
+            let recognized = 0;
+            let failed = 0;
+            
+            for (const cat of Object.values(imageCategories)) {
+                total += cat.images.length;
+                recognized += cat.recognized;
+                failed += cat.failed;
+            }
+            
+            const statsEl = document.getElementById('recognitionStats');
+            let text = `已识别 ${recognized}/${total} 张`;
+            if (failed > 0) text += `（失败 ${failed}）`;
+            statsEl.textContent = text;
+            
+            const retryBtn = document.getElementById('retryBtn');
+            if (failedImages.length > 0) {
+                retryBtn.classList.remove('hidden');
+            } else {
+                retryBtn.classList.add('hidden');
+            }
+        }
+
+        function queueRecognition(category, imageId) {
+            pendingFiles.push({ category, imageId });
+            processNext();
+        }
+
+        async function processNext() {
+            if (isProcessing || pendingFiles.length === 0) return;
+            
+            isProcessing = true;
+            const task = pendingFiles.shift();
+            
+            try {
+                await recognizeImage(task.category, task.imageId);
+            } catch (e) {
+                console.error('Recognition error:', e);
+            }
+            
+            isProcessing = false;
+            processNext();
+        }
+
+        async function recognizeImage(category, imageId) {
+            const cat = imageCategories[category];
+            const imageObj = cat.images.find(i => i.id === imageId);
+            if (!imageObj) return;
+            
+            imageObj.status = 'processing';
+            
+            const overlay = document.getElementById('overlay_' + imageId);
+            if (overlay) {
+                overlay.innerHTML = '<div class="spinner"></div>';
+            }
+            
+            const statusEl = document.getElementById('ocrStatus');
+            statusEl.innerHTML = `<span class="inline-block align-middle"><span class="spinner mr-2"></span>正在识别【${cat.name}】...</span>`;
+            
+            try {
+                const formData = new FormData();
+                formData.append('file', imageObj.file);
+                formData.append('category', cat.category);
+                
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    imageObj.status = 'done';
+                    cat.recognized++;
+                    
+                    if (overlay) {
+                        overlay.innerHTML = '<span class="text-green-500 text-xl">✓</span>';
+                        setTimeout(() => { overlay.style.display = 'none'; }, 1500);
+                    }
+                    
+                    parseDeviceInfo(data, cat.bgClass);
+                    
+                    const timing = data.timing || {};
+                    const totalTime = timing.total_time || 0;
+                    showToast(`${cat.name} 识别完成，耗时 ${totalTime.toFixed(2)}s`, 'success');
+                    
+                } else {
+                    throw new Error(data.error || '识别失败');
+                }
+                
+            } catch (error) {
+                imageObj.status = 'failed';
+                cat.failed++;
+                failedImages.push({ category, imageId });
+                
+                if (overlay) {
+                    overlay.innerHTML = '<span class="text-red-500 text-xl">✗</span>';
+                    overlay.className = 'absolute inset-0 bg-black bg-opacity-40 flex items-center justify-center rounded cursor-pointer';
+                    overlay.onclick = (e) => {
+                        e.stopPropagation();
+                        retryImage(category, imageId);
+                    };
+                    overlay.title = '点击重试';
+                }
+                
+                showToast(`识别失败：${error.message}`, 'error');
+                console.error('Recognition failed:', error);
+            }
+            
+            updateStatus(category);
+            
+            if (pendingFiles.length === 0) {
+                const allDone = Object.values(imageCategories).every(
+                    c => c.images.every(i => i.status === 'done' || i.status === 'failed')
+                );
+                if (allDone) {
+                    let total = 0, success = 0, fail = 0;
+                    for (const c of Object.values(imageCategories)) {
+                        total += c.images.length;
+                        success += c.recognized;
+                        fail += c.failed;
+                    }
+                    statusEl.textContent = `识别完成！成功 ${success} 张，失败 ${fail} 张（共 ${total} 张）`;
+                }
+            }
+        }
+
+        function retryImage(category, imageId) {
+            const cat = imageCategories[category];
+            const imageObj = cat.images.find(i => i.id === imageId);
+            if (!imageObj) return;
+            
+            if (imageObj.status === 'failed') {
+                cat.failed--;
+                failedImages = failedImages.filter(f => !(f.category === category && f.imageId === imageId));
+            }
+            
+            imageObj.status = 'pending';
+            
+            const overlay = document.getElementById('overlay_' + imageId);
+            if (overlay) {
+                overlay.innerHTML = '<div class="spinner"></div>';
+                overlay.className = 'absolute inset-0 bg-black bg-opacity-40 flex items-center justify-center rounded';
+                overlay.onclick = null;
+                overlay.style.display = 'flex';
+            }
+            
+            updateStatus(category);
+            queueRecognition(category, imageId);
+            showToast('正在重试识别...', 'info');
+        }
+
+        function retryFailed() {
+            const toRetry = [...failedImages];
+            failedImages = [];
+            
+            for (const item of toRetry) {
+                retryImage(item.category, item.imageId);
+            }
+        }
+
+        function parseDeviceInfo(data, bgClass) {
+            const tbody = document.getElementById('tableBody');
+            addRow(null, bgClass);
+            const currentRow = tbody.children.length - 1;
+            const inputs = tbody.children[currentRow].querySelectorAll('input');
+            
+            if (data.device_name) inputs[1].value = data.device_name;
+            if (data.model) inputs[2].value = data.model;
+            if (data.factory_number) inputs[3].value = data.factory_number;
+            if (data.device_number) inputs[4].value = data.device_number;
+            if (data.manufacturer) inputs[5].value = data.manufacturer;
+            
+            if (data.ocr_text) {
+                displayOCRResult(data.ocr_text, data.category, data.timing);
+            }
+        }
+
+        function displayOCRResult(text, category, timing) {
+            const panel = document.getElementById('ocrResultsPanel');
+            const emptyMsg = panel.querySelector('.text-center');
+            if (emptyMsg) {
+                emptyMsg.remove();
+            }
+            
+            ocrResultCount++;
+            const categoryNames = {
+                'inspected': '外检',
+                'brought_back': '带回',
+                'returned': '退检'
+            };
+            
+            const colors = {
+                'inspected': 'text-green-700',
+                'brought_back': 'text-blue-700',
+                'returned': 'text-red-700'
+            };
+            
+            const timeStr = timing ? ` · ${timing.total_time?.toFixed(2) || 0}s` : '';
+            
+            const card = document.createElement('div');
+            card.className = 'ocr-card';
+            card.innerHTML = `
+                <div class="ocr-card-header ${colors[category] || 'text-gray-700'}">
+                    识别记录 #${ocrResultCount} · ${categoryNames[category] || '未知类别'}${timeStr}
+                </div>
+                <div class="ocr-card-content text-gray-600">
+                    ${escapeHtml(text) || '<span class="text-gray-400">未识别到文字内容</span>'}
+                </div>
+            `;
+            panel.appendChild(card);
+            panel.scrollTop = panel.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function clearOCRResults() {
+            const panel = document.getElementById('ocrResultsPanel');
+            panel.innerHTML = '<div class="text-center text-gray-400 py-8">暂无识别记录，上传图片后将自动识别并在此显示</div>';
+            ocrResultCount = 0;
+        }
+
+        async function exportExcel() {
+            const companyInfo = {
+                company: '公司-下场单',
+                salesperson: document.getElementById('salesman').value,
+                field_leader: document.getElementById('siteLeader').value,
+                company_name: document.getElementById('companyName').value,
+                contact_person: document.getElementById('contact').value,
+                contact_phone: document.getElementById('phone').value,
+                address: document.getElementById('address').value,
+                field_date: document.getElementById('siteDate').value || new Date().toISOString().split('T')[0],
+                field_personnel: document.getElementById('staff').value,
+                remark: document.getElementById('remark').value || '/'
+            };
+
+            const devices = [];
+            const rows = document.querySelectorAll('#tableBody tr');
+            rows.forEach((row) => {
+                const inputs = row.querySelectorAll('input');
+                let category = 'inspected';
+                if (row.classList.contains('bg-blue-100')) category = 'brought_back';
+                else if (row.classList.contains('bg-red-100')) category = 'returned';
+                
+                devices.push({
+                    category: category,
+                    cert_date: inputs[0].value,
+                    device_name: inputs[1].value,
+                    model: inputs[2].value,
+                    factory_number: inputs[3].value,
+                    device_number: inputs[4].value,
+                    manufacturer: inputs[5].value,
+                    remark: inputs[6].value,
+                    responsible_person: inputs[7].value
+                });
+            });
+
+            try {
+                const statusEl = document.getElementById('ocrStatus');
+                statusEl.textContent = '正在生成Excel文件...';
+                
+                const response = await fetch('/generate_excel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ company_info: companyInfo, devices: devices })
+                });
+
+                const data = await response.json();
+                if (response.ok && data.success) {
+                    const url = `/download/${data.filename}`;
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = data.filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    showToast(`Excel导出成功，耗时 ${data.generate_time}s`, 'success');
+                    statusEl.textContent = 'Excel导出成功';
+                } else {
+                    throw new Error(data.error || '导出失败');
+                }
+            } catch (error) {
+                showToast('导出失败: ' + error.message, 'error');
+            }
+        }
+
+        function clearForm() {
+            if (!confirm('确定要清空所有内容吗？')) return;
+            document.querySelectorAll('input[type="text"], input[type="number"], input[type="date"]').forEach(el => el.value = '');
+            
+            Object.keys(imageCategories).forEach(key => {
+                imageCategories[key].images = [];
+                imageCategories[key].recognized = 0;
+                imageCategories[key].failed = 0;
+                const previewId = 'preview' + key.charAt(0).toUpperCase() + key.slice(1);
+                const statusId = 'status' + key.charAt(0).toUpperCase() + key.slice(1);
+                document.getElementById(previewId).innerHTML = '';
+                document.getElementById(statusId).textContent = '0 张 / 已识别 0 张';
+            });
+            
+            failedImages = [];
+            pendingFiles = [];
+            totalRecognized = 0;
+            
+            ['uploadExternal', 'uploadBringBack', 'uploadReturn'].forEach(id => {
+                document.getElementById(id).value = '';
+            });
+            
+            document.getElementById('ocrStatus').textContent = '上传图片后将自动开始识别';
+            initTable();
+            clearOCRResults();
+            updateOverallStats();
+            showToast('已清空所有内容', 'info');
+        }
+
+        window.onload = initTable;
+    </script>
+</body>
+</html>
