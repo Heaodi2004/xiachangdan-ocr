@@ -1,0 +1,8 @@
+id,你的业务空间ID
+apiKey,你的API密钥
+apiHost,你的API域名
+openAiCompatible,https://你的API域名/compatible-mode/v1
+dashScope,https://你的API域名/api/v1
+description,下场单的制作
+workspaceName,默认业务空间
+workspaceId,你的工作空间ID

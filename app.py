@@ -1,5 +1,7 @@
 import os
 import re
+import csv
+import json
 import cv2
 import uuid
 import time
@@ -11,13 +13,19 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 app = Flask(__name__)
 CORS(app)
 
-UPLOAD_FOLDER = 'uploads'
-OUTPUT_FOLDER = 'output'
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+OUTPUT_FOLDER = os.path.join(BASE_DIR, 'output')
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'tiff', 'tif'}
 MAX_FILE_SIZE = 10 * 1024 * 1024
+DEBUG_MODE = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
+OCR_LAZY_INIT = os.environ.get('OCR_LAZY_INIT', 'True').lower() == 'true'
+USE_LLM = os.environ.get('USE_LLM', 'True').lower() == 'true'
+LLM_MODEL = os.environ.get('LLM_MODEL', 'qwen3.7-plus')
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['OUTPUT_FOLDER'] = OUTPUT_FOLDER
@@ -25,10 +33,48 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
 
 ocr_reader = None
 ocr_engine = 'easyocr'
+ocr_init_started = False
+
+llm_config = {
+    'api_key': '',
+    'base_url': '',
+    'model': LLM_MODEL,
+    'enabled': False
+}
+
+def load_llm_config():
+    global llm_config
+    csv_path = os.path.join(BASE_DIR, 'api.csv')
+    if not os.path.exists(csv_path):
+        print('api.csv not found, LLM disabled')
+        return
+    
+    try:
+        config = {}
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if len(row) >= 2:
+                    config[row[0].strip()] = row[1].strip()
+        
+        api_key = config.get('apiKey', '')
+        base_url = config.get('openAiCompatible', '')
+        
+        if api_key and base_url:
+            llm_config['api_key'] = api_key
+            llm_config['base_url'] = base_url
+            llm_config['enabled'] = True
+            llm_config['model'] = LLM_MODEL
+            print(f'LLM config loaded: model={LLM_MODEL}')
+        else:
+            print('LLM config incomplete, LLM disabled')
+    except Exception as e:
+        print(f'Failed to load LLM config: {e}')
 
 def init_ocr():
-    global ocr_reader
-    if ocr_reader is None:
+    global ocr_reader, ocr_init_started
+    if ocr_reader is None and not ocr_init_started:
+        ocr_init_started = True
         try:
             import easyocr
             ocr_reader = easyocr.Reader(['ch_sim', 'en'], gpu=False, verbose=False)
@@ -36,8 +82,109 @@ def init_ocr():
         except Exception as e:
             print(f'EasyOCR init failed: {e}')
             ocr_reader = None
+            ocr_init_started = False
+    return ocr_reader
 
-init_ocr()
+if not OCR_LAZY_INIT:
+    init_ocr()
+
+load_llm_config()
+
+def call_llm_extract(ocr_text, category='inspected'):
+    if not USE_LLM or not llm_config['enabled']:
+        return None, 0
+    
+    try:
+        import requests
+        
+        category_name = {
+            'inspected': '外检设备',
+            'brought_back': '带回设备',
+            'returned': '退检设备'
+        }.get(category, '外检设备')
+        
+        system_prompt = """你是一个专业的设备信息提取助手。请从用户提供的OCR识别文本中，提取设备相关信息，并严格按照JSON格式返回。
+
+需要提取的字段（对应Excel表格表头）：
+1. cert_date - 证书日期（检定/校准日期，格式YYYY-MM-DD，如果没有则留空）
+2. device_name - 设备名称（仪器名称、产品名称）
+3. model - 规格型号（型号规格、型号、Type、Model）
+4. factory_number - 出厂编号（出厂号、序列号、SN、Serial No.、编号）
+5. device_number - 设备编号（资产编号、内部编号，如果没有则留空）
+6. manufacturer - 生产厂家（制造厂家、制造商、品牌、Manufacturer）
+7. remark - 设备备注（其他重要信息：精度、量程、校准点、使用地点、温湿度要求等，如果没有则留空）
+8. responsible_person - 负责人（如果有则提取，没有则留空）
+
+要求：
+- 只返回JSON格式，不要有任何其他文字说明
+- 没有的字段留空字符串
+- 中文优先，尽量保留原文
+- 设备名称要准确完整
+- 型号、编号等不要有多余字符
+- 从上下文中推断合理的信息"""
+
+        user_prompt = f"""设备类别：{category_name}
+
+OCR识别文本：
+{ocr_text}
+
+请提取设备信息，返回JSON格式。"""
+
+        start_time = time.time()
+        
+        url = llm_config['base_url'].rstrip('/') + '/chat/completions'
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {llm_config["api_key"]}'
+        }
+        payload = {
+            'model': llm_config['model'],
+            'messages': [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            'temperature': 0.3,
+            'max_tokens': 1000
+        }
+        
+        response = requests.post(url, headers=headers, json=payload, timeout=60)
+        response.raise_for_status()
+        data = response.json()
+        
+        elapsed = time.time() - start_time
+        content = data['choices'][0]['message']['content'].strip()
+        
+        content = re.sub(r'^```json\s*', '', content)
+        content = re.sub(r'\s*```$', '', content)
+        
+        try:
+            result = json.loads(content)
+        except json.JSONDecodeError:
+            json_match = re.search(r'\{[\s\S]*\}', content)
+            if json_match:
+                result = json.loads(json_match.group())
+            else:
+                return None, elapsed
+        
+        standardized = {
+            'device_name': str(result.get('device_name', '')).strip(),
+            'model': str(result.get('model', '')).strip(),
+            'factory_number': str(result.get('factory_number', '')).strip(),
+            'device_number': str(result.get('device_number', '')).strip(),
+            'manufacturer': str(result.get('manufacturer', '')).strip(),
+            'cert_date': str(result.get('cert_date', '')).strip(),
+            'remark': str(result.get('remark', '')).strip(),
+            'responsible_person': str(result.get('responsible_person', '')).strip(),
+            'confidence': {'llm_based': 0.85}
+        }
+        
+        return standardized, elapsed
+        
+    except Exception as e:
+        print(f'LLM call failed: {e}')
+        import traceback
+        traceback.print_exc()
+        return None, 0
 
 COLORS = {
     'inspected': 'FF92D050',
@@ -437,9 +584,46 @@ def extract_device_info(text):
     
     return info
 
+def merge_device_info(regex_info, llm_info):
+    if llm_info is None:
+        return regex_info
+    
+    merged = dict(regex_info)
+    
+    all_fields = ['device_name', 'model', 'factory_number', 'device_number', 
+                  'manufacturer', 'cert_date', 'remark', 'responsible_person']
+    
+    for field in all_fields:
+        llm_value = llm_info.get(field, '').strip()
+        regex_value = regex_info.get(field, '').strip() if isinstance(regex_info, dict) else ''
+        
+        if llm_value and not regex_value:
+            merged[field] = llm_value
+        elif llm_value and regex_value:
+            if field in ['remark', 'cert_date', 'responsible_person']:
+                merged[field] = llm_value
+            elif len(llm_value) >= len(regex_value):
+                merged[field] = llm_value
+    
+    if 'confidence' not in merged:
+        merged['confidence'] = {}
+    merged['confidence']['llm_used'] = True
+    
+    return merged
+
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/api/config', methods=['GET'])
+def get_config():
+    return jsonify({
+        'llm_enabled': llm_config['enabled'],
+        'llm_model': llm_config['model'],
+        'ocr_engine': ocr_engine,
+        'max_file_size_mb': MAX_FILE_SIZE // 1024 // 1024,
+        'allowed_extensions': list(ALLOWED_EXTENSIONS)
+    })
 
 @app.route('/upload', methods=['POST'])
 def upload_image():
@@ -468,8 +652,7 @@ def upload_image():
         with open(filepath, 'wb') as f:
             f.write(image_bytes)
         
-        if ocr_reader is None:
-            init_ocr()
+        init_ocr()
         
         if ocr_reader is None:
             return jsonify({'error': 'OCR引擎初始化失败，请检查环境', 'error_code': 'ocr_init_failed'}), 500
@@ -477,15 +660,26 @@ def upload_image():
         text, ocr_time, decode_time, error_code = ocr_image(image_bytes)
         
         extract_start = time.time()
-        info = extract_device_info(text)
+        regex_info = extract_device_info(text)
         extract_time = time.time() - extract_start
         
-        total_time = ocr_time + decode_time + extract_time
+        llm_info = None
+        llm_time = 0
+        if text and text.strip():
+            llm_start = time.time()
+            llm_info, llm_time = call_llm_extract(text, category)
+            llm_time = time.time() - llm_start
+        
+        info = merge_device_info(regex_info, llm_info)
+        
+        total_time = ocr_time + decode_time + extract_time + llm_time
         
         info['category'] = category
         info['ocr_text'] = text
         info['filename'] = filename
         info['ocr_engine'] = ocr_engine
+        info['llm_used'] = llm_info is not None
+        info['llm_model'] = llm_config['model'] if llm_info is not None else ''
         info['success'] = error_code is None
         if error_code:
             info['error_code'] = error_code
@@ -493,6 +687,7 @@ def upload_image():
             'decode_time': round(decode_time, 3),
             'ocr_time': round(ocr_time, 3),
             'extract_time': round(extract_time, 3),
+            'llm_time': round(llm_time, 3),
             'total_time': round(total_time, 3)
         }
         
@@ -679,7 +874,13 @@ def download_file(filename):
 def request_entity_too_large(error):
     return jsonify({'error': f'文件大小超过限制（最大{MAX_FILE_SIZE//1024//1024}MB）', 'error_code': 'file_too_large'}), 413
 
-if __name__ == '__main__':
+def create_directories():
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-    app.run(debug=True, host='0.0.0.0', port=5000)
+
+create_directories()
+
+if __name__ == '__main__':
+    create_directories()
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=DEBUG_MODE, host='0.0.0.0', port=port)

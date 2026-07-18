@@ -559,18 +559,21 @@
             const currentRow = tbody.children.length - 1;
             const inputs = tbody.children[currentRow].querySelectorAll('input');
             
+            if (data.cert_date) inputs[0].value = data.cert_date;
             if (data.device_name) inputs[1].value = data.device_name;
             if (data.model) inputs[2].value = data.model;
             if (data.factory_number) inputs[3].value = data.factory_number;
             if (data.device_number) inputs[4].value = data.device_number;
             if (data.manufacturer) inputs[5].value = data.manufacturer;
+            if (data.remark) inputs[6].value = data.remark;
+            if (data.responsible_person) inputs[7].value = data.responsible_person;
             
             if (data.ocr_text) {
-                displayOCRResult(data.ocr_text, data.category, data.timing);
+                displayOCRResult(data.ocr_text, data.category, data.timing, data.llm_used, data.llm_model);
             }
         }
 
-        function displayOCRResult(text, category, timing) {
+        function displayOCRResult(text, category, timing, llmUsed, llmModel) {
             const panel = document.getElementById('ocrResultsPanel');
             const emptyMsg = panel.querySelector('.text-center');
             if (emptyMsg) {
@@ -591,12 +594,13 @@
             };
             
             const timeStr = timing ? ` · ${timing.total_time?.toFixed(2) || 0}s` : '';
+            const llmBadge = llmUsed ? `<span class="ml-2 px-2 py-0.5 text-xs bg-purple-100 text-purple-700 rounded">AI: ${llmModel || '大模型'}</span>` : '';
             
             const card = document.createElement('div');
             card.className = 'ocr-card';
             card.innerHTML = `
                 <div class="ocr-card-header ${colors[category] || 'text-gray-700'}">
-                    识别记录 #${ocrResultCount} · ${categoryNames[category] || '未知类别'}${timeStr}
+                    识别记录 #${ocrResultCount} · ${categoryNames[category] || '未知类别'}${timeStr}${llmBadge}
                 </div>
                 <div class="ocr-card-content text-gray-600">
                     ${escapeHtml(text) || '<span class="text-gray-400">未识别到文字内容</span>'}
