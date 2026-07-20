@@ -178,7 +178,7 @@
                         <thead>
                             <tr class="gray-header">
                                 <th class="table-cell w-12">序号</th>
-                                <th class="table-cell w-24">证书日期</th>
+                                <th class="table-cell w-24">下场日期</th>
                                 <th class="table-cell w-40">设备名称</th>
                                 <th class="table-cell w-36">规格型号</th>
                                 <th class="table-cell w-36">出厂编号</th>
@@ -251,14 +251,23 @@
             tbody.innerHTML = '';
         }
 
+        function getTodayDate() {
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
         function addRow(num, bgClass = '') {
             const tbody = document.getElementById('tableBody');
             const rowNum = num || tbody.children.length + 1;
+            const today = getTodayDate();
             const tr = document.createElement('tr');
             if (bgClass) tr.className = bgClass;
             tr.innerHTML = `
                 <td class="table-cell text-center">${rowNum}</td>
-                <td class="table-cell"><input type="text" class="input-plain" data-field="certDate"></td>
+                <td class="table-cell"><input type="text" class="input-plain" data-field="certDate" value="${today}"></td>
                 <td class="table-cell"><input type="text" class="input-plain" data-field="name"></td>
                 <td class="table-cell"><input type="text" class="input-plain" data-field="model"></td>
                 <td class="table-cell"><input type="text" class="input-plain" data-field="factoryNo"></td>

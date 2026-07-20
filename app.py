@@ -20,8 +20,12 @@ CORS(app)
 
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 OUTPUT_FOLDER = os.path.join(BASE_DIR, 'output')
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'tiff', 'tif'}
-MAX_FILE_SIZE = 10 * 1024 * 1024
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'tiff', 'tif', 'heic', 'heif'}
+ALLOWED_MIME_TYPES = {
+    'image/png', 'image/jpeg', 'image/gif', 'image/bmp',
+    'image/webp', 'image/tiff', 'image/heic', 'image/heif'
+}
+MAX_FILE_SIZE = 20 * 1024 * 1024
 DEBUG_MODE = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
 OCR_LAZY_INIT = os.environ.get('OCR_LAZY_INIT', 'True').lower() == 'true'
 USE_LLM = os.environ.get('USE_LLM', 'True').lower() == 'true'
@@ -106,7 +110,7 @@ def call_llm_extract(ocr_text, category='inspected'):
         system_prompt = """你是一个专业的设备信息提取助手。请从用户提供的OCR识别文本中，提取设备相关信息，并严格按照JSON格式返回。
 
 需要提取的字段（对应Excel表格表头）：
-1. cert_date - 证书日期（检定/校准日期，格式YYYY-MM-DD，如果没有则留空）
+1. cert_date - 下场日期（现场工作日期，格式YYYY-MM-DD，如果没有则留空，默认为当天）
 2. device_name - 设备名称（仪器名称、产品名称）
 3. model - 规格型号（型号规格、型号、Type、Model）
 4. factory_number - 出厂编号（出厂号、序列号、SN、Serial No.、编号）
@@ -201,7 +205,9 @@ ROW_HEIGHTS = {
     1: 27.0, 2: 25.0, 3: 25.0, 4: 25.0, 5: 25.0
 }
 
-def allowed_file(filename):
+def allowed_file(filename, content_type=None):
+    if content_type and content_type in ALLOWED_MIME_TYPES:
+        return True
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 COMMON_DEVICE_NAMES = [
@@ -611,9 +617,28 @@ def merge_device_info(regex_info, llm_info):
     
     return merged
 
+def is_mobile_device():
+    user_agent = request.headers.get('User-Agent', '').lower()
+    mobile_keywords = ['android', 'iphone', 'ipad', 'ipod', 'mobile', 'phone', 'webos', 'blackberry', 'symbian', 'windows phone', 'opera mini', 'mobi', 'palm', 'fennec', 'maemo', 'midp', 'avantgo', 'docomo', 'up.browser']
+    for kw in mobile_keywords:
+        if kw in user_agent:
+            return True
+    return False
+
 @app.route('/')
 def index():
+    if is_mobile_device():
+        return render_template('mobile/index.html')
     return render_template('index.html')
+
+@app.route('/desktop')
+def desktop():
+    return render_template('index.html')
+
+@app.route('/m')
+@app.route('/mobile')
+def mobile():
+    return render_template('mobile/index.html')
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
@@ -627,23 +652,35 @@ def get_config():
 
 @app.route('/upload', methods=['POST'])
 def upload_image():
+    print(f'=== Upload request from {request.remote_addr} ===')
+    print(f'Files: {list(request.files.keys())}')
+    print(f'Form: {list(request.form.keys())}')
+    
     if 'file' not in request.files:
+        print('ERROR: no file in request.files')
         return jsonify({'error': '未上传文件', 'error_code': 'no_file'}), 400
     
     file = request.files['file']
     category = request.form.get('category', 'inspected')
+    print(f'Filename: {file.filename}, Content-Type: {file.content_type}, Category: {category}')
     
     if not file or file.filename == '':
+        print('ERROR: empty filename')
         return jsonify({'error': '文件名为空', 'error_code': 'empty_filename'}), 400
     
-    if not allowed_file(file.filename):
-        return jsonify({'error': '不支持的文件格式，请上传图片文件', 'error_code': 'invalid_file_type'}), 400
+    if not allowed_file(file.filename, file.content_type):
+        print(f'ERROR: invalid file type: {file.filename}, content_type: {file.content_type}')
+        return jsonify({'error': f'不支持的文件格式（{file.filename.rsplit(".", 1)[-1] if "." in file.filename else "未知"}），请上传图片文件', 'error_code': 'invalid_file_type'}), 400
     
     try:
         image_bytes = file.read()
+        print(f'File size: {len(image_bytes)} bytes ({len(image_bytes)/1024/1024:.2f} MB)')
+        
         if len(image_bytes) == 0:
+            print('ERROR: empty file content')
             return jsonify({'error': '文件内容为空', 'error_code': 'empty_file'}), 400
         if len(image_bytes) > MAX_FILE_SIZE:
+            print(f'ERROR: file too large: {len(image_bytes)} > {MAX_FILE_SIZE}')
             return jsonify({'error': f'文件大小超过限制（最大{MAX_FILE_SIZE//1024//1024}MB）', 'error_code': 'file_too_large'}), 400
         
         filename = str(uuid.uuid4()) + '_' + file.filename
@@ -671,6 +708,10 @@ def upload_image():
             llm_time = time.time() - llm_start
         
         info = merge_device_info(regex_info, llm_info)
+        
+        if not info.get('cert_date'):
+            from datetime import datetime
+            info['cert_date'] = datetime.now().strftime('%Y-%m-%d')
         
         total_time = ocr_time + decode_time + extract_time + llm_time
         
@@ -814,7 +855,7 @@ def generate_excel():
         ws['I4'].alignment = center_align
         ws['I4'].fill = color_fills['inspected']
         
-        headers = ['序号', '证书日期', '设备名称', '规格型号', '出厂编号', '设备编号', '生产厂家', '设备备注（特殊要求、校准信息、地点地点、温湿度等）', '负责人']
+        headers = ['序号', '下场日期', '设备名称', '规格型号', '出厂编号', '设备编号', '生产厂家', '设备备注（特殊要求、校准信息、地点地点、温湿度等）', '负责人']
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=5, column=col, value=header)
             cell.font = header_font
